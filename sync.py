@@ -11,8 +11,10 @@ SOURCE_PATH = "~/m/music"
 MAX_NAME_LENGTH = 30
 
 ELLIPSIS = "\u2026"
-UNSELECT = colored("_", "white", "on_red", attrs=["bold"])
-SELECT = colored("@", "white", "on_green", attrs=["bold"])
+UNSELECT = " "
+SELECT = colored("X", "white", "on_green", attrs=["bold"])
+SEARCH_ICON = colored("?", "black", "on_white", attrs=["bold"])
+SEARCH_LEFT = colored("<", "dark_grey", "on_light_grey", attrs=["bold"])
 DIRS = ['up', 'down', 'right', 'left']
 
 def print_histogram(fs):
@@ -32,29 +34,39 @@ def print_histogram(fs):
             print("*" if histo[c] > r else " ", end="")
         print("")
 
-def calc_pg(fs):
+def calc_pg(fsl):
     tdim = os.get_terminal_size()
     a = (tdim[0] + 1) // (MAX_NAME_LENGTH + 2)
     pgl = a * (tdim[1] - 1)
-    pgs = ceil(len(fs) / pgl)
+    pgs = ceil(fsl / pgl)
     return (tdim, a, pgl, pgs)
 
-def print_pg(fs, pos):
-    tdim, a, pgl, pgs = calc_pg(fs)
-    s = pos // pgl
+def closest_pos(searfs, pos):
+    oldpos = -1
+    for (i, e) in enumerate(searfs):
+        if e == pos:
+            return i
+        if e > pos:
+            return oldpos if oldpos > 0 else i
+        oldpos = i
+    return oldpos
+
+def print_pg(fs, searfs, pos, sel, sear):
+    tdim, a, pgl, pgs = calc_pg(len(searfs))
+    cpos = closest_pos(searfs, pos)
+    s = cpos // pgl
     out = ""
     for fp in range(s * pgl, (s + 1) * pgl):
-        if fp >= len(fs):
+        if fp >= len(searfs) or fp < 0:
             out += " " * (MAX_NAME_LENGTH + 1) + ("\n" if fp % a == a - 1 else " ")
             continue
-        f = fs[fp]
+        f = fs[searfs[fp]]
 
-        selr = UNSELECT
-        out += selr
+        out += SELECT if sel[searfs[fp]] else UNSELECT
 
         fn = f if len(f) <= MAX_NAME_LENGTH else f[:MAX_NAME_LENGTH - 1] + ELLIPSIS
         spm = MAX_NAME_LENGTH - len(fn)
-        if fp == pos:
+        if fp == cpos:
             fn = colored(fn, "black", "on_white")
         out += fn
         if spm > 0:
@@ -62,7 +74,12 @@ def print_pg(fs, pos):
 
         out += "\n" if fp % a == a - 1 else " "
     os.system("clear")
-    print(out + f"{s+1} / {pgs}".rjust(tdim[0]), end="", flush=True)
+    sl = 2 * (MAX_NAME_LENGTH + 2)
+    ss = SEARCH_ICON + sear if len(sear) < sl else SEARCH_LEFT + sear[-sl + 1:]
+    pgmk = f"{s+1} / {pgs}"
+    spm = tdim[0] - min(len(sear), sl - 1) - len(pgmk) - 1
+    out += ss + " " * spm + pgmk
+    print(out, end="", flush=True)
 
 def get_key():
     old_settings = termios.tcgetattr(sys.stdin)
@@ -77,29 +94,58 @@ def get_key():
     finally:
         termios.tcsetattr(sys.stdin, termios.TCSADRAIN, old_settings)
 
+def change_pos(searfs, pos, dpos):
+    pos = closest_pos(searfs, pos) + dpos
+    if pos >= len(searfs):
+        pos = len(searfs) - 1
+    if pos < 0:
+        pos = 0
+    return searfs[pos] if len(searfs) > 0 else -1
+
 def main(sp):
     fs = [f for f in os.listdir(sp) if not isfile(join(sp, f))]
+    fs.sort(key=str.lower)
+    sel = [False] * len(fs) # TODO
     #print(fs)
     #print_histogram(fs)
-    print(len([f for f in fs if len(f) > MAX_NAME_LENGTH]), "/", len(fs))
+    #print(len([f for f in fs if len(f) > MAX_NAME_LENGTH]), "/", len(fs))
+    sear = ""
     pos = 0
     try:
         while True:
+            searfs = [i for (i, f) in enumerate(fs) if sear.lower() in f.lower()]
+
+            if pos >= len(fs):
+                pos = len(fs) - 1
             if pos < 0:
                 pos = 0
-            elif pos >= len(fs):
-                pos = len(fs - 1)
-            print_pg(fs, pos)
+
+            print_pg(fs, searfs, pos, sel, sear)
+
             k = get_key()
-            tdim, a, pgl, pgs = calc_pg(fs)
+            tdim, a, pgl, pgs = calc_pg(len(searfs))
             if k == DIRS[0]:
-                pos -= a
+                pos = change_pos(searfs, pos, -a)
             elif k == DIRS[1]:
-                pos += a
+                pos = change_pos(searfs, pos, a)
             elif k == DIRS[2]:
-                pos += 1
+                pos = change_pos(searfs, pos, 1)
             elif k == DIRS[3]:
-                pos -= 1
+                pos = change_pos(searfs, pos, -1)
+            elif k == ">":
+                pos = change_pos(searfs, pos, pgl)
+            elif k == "<":
+                pos = change_pos(searfs, pos, -pgl)
+            elif k == "\n":
+                pos = change_pos(searfs, pos, 0)
+                if pos > 0:
+                    sel[pos] = not sel[pos]
+            elif k == "\b" or ord(k) == 127:
+                if len(sear) > 0:
+                    sear = sear[:-1]
+            else:
+                sear += k
+
     except (KeyboardInterrupt, SystemExit):
         os.system('stty sane')
         quit()
