@@ -39,7 +39,7 @@ def load_sel(fs):
     except Exception as e:
         print("caught error reading sync data", e)
     global sync_ts
-    sync_ts = tuple(ts)
+    sync_ts = ts
     return sel
 
 def get_modified_ts(fn):
@@ -82,6 +82,7 @@ def sync(fs, sel):
                 subprocess.run(["rm", "-rf", join(dest, fs[i])], check=True)
             done_count += 1
             print(f"\r{done_count:03} / {done_total:03}", end="", flush=True)
+            sync_ts[i] = None
         for i in to_add + to_upd:
             if isdir(join(dest, fs[i])):
                 subprocess.run(["rm", "-rf", f"{join(dest, fs[i])}/*"], check=True)
@@ -93,6 +94,7 @@ def sync(fs, sel):
                     subprocess.run(["cp", join(fn, sn), f"{join(dest, fs[i])}/"], check=True)
             done_count += 1
             print(f"\r{done_count:03} / {done_total:03}", end="", flush=True)
+            sync_ts[i] = save_dict[fs[i]]
 
     except Exception as e:
         print("\nerror syncing", e)
@@ -107,7 +109,6 @@ def sync(fs, sel):
             all_todos = to_add + to_upd
             for i in range(done_total - done_count):
                 del save_dict[fs[all_todos[-1-i]]]
-
     try:
         with open(SYNC_PATH, "wt") as f:
             f.write(json.dumps(save_dict))
