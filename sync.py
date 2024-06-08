@@ -1,5 +1,5 @@
 import os
-from os.path import isfile, join, expanduser, getmtime
+from os.path import isfile, isdir, ismount, join, expanduser, getmtime
 import re
 from math import ceil
 from termcolor import colored
@@ -7,9 +7,12 @@ import termios
 import tty
 import sys
 import json
+import subprocess
 
 SOURCE_PATH = expanduser("~/m/music")
 SYNC_PATH = "./sync.json"
+MOUNT_DIR = expanduser("~/android_mnt")
+DEST_PATH = "Internal shared storage/Music/"
 
 MAX_NAME_LENGTH = 30
 SONG_REGEX = r"^.+\.mp3$"
@@ -41,10 +44,8 @@ def load_sel(fs):
 
 def get_modified_ts(fn):
     try:
-        return max(getmtime(join(fn, sn))
-                   for sn in os.listdir(fn)
-                   if isfile(join(SOURCE_PATH, join(fn, sn)))
-                   and re.match(SONG_REGEX, sn))
+        return max(getmtime(join(fn, sn)) for sn in os.listdir(fn)
+                   if isfile(join(fn, sn)) and re.match(SONG_REGEX, sn))
     except Exception as e:
         print(f"caught error getting last modified time for album {fn}:\n\t{e}")
         return None
@@ -67,13 +68,53 @@ def sync(fs, sel):
                 to_upd.append(i)
 
     print(f"to_del({len(to_del)}): {[fs[i] for i in to_del]}\nto_add({len(to_add)}): {[fs[i] for i in to_add]}\nto_upd({len(to_upd)}): {[fs[i] for i in to_upd]}")
-    #TODO actually sync
+
+    done_count = 0
+    done_total = len(to_del) + len(to_add) + len(to_upd)
+    print(f"\r{done_count:03} / {done_total:03}", end="", flush=True)
+
+    try:
+        if not ismount(MOUNT_DIR):
+            subprocess.run(["aft-mtp-mount", "MOUNT_DIR"], check=True)
+        dest = join(MOUNT_DIR, DEST_PATH)
+        for i in to_del:
+            if os.path.exists(join(dest, fs[i])):
+                subprocess.run(["rm", "-rf", join(dest, fs[i])], check=True)
+            done_count += 1
+            print(f"\r{done_count:03} / {done_total:03}", end="", flush=True)
+        for i in to_add + to_upd:
+            if isdir(join(dest, fs[i])):
+                subprocess.run(["rm", "-rf", f"{join(dest, fs[i])}/*"], check=True)
+            else:
+                subprocess.run(["mkdir", join(dest, fs[i])], check=True)
+            fn = join(SOURCE_PATH, fs[i])
+            for sn in os.listdir(fn):
+                if isfile(join(fn, sn)) and re.match(SONG_REGEX, sn):
+                    subprocess.run(["cp", join(fn, sn), f"{join(dest, fs[i])}/"], check=True)
+            done_count += 1
+            print(f"\r{done_count:03} / {done_total:03}", end="", flush=True)
+
+    except Exception as e:
+        print("\nerror syncing", e)
+    print("")
+
+    if done_count < done_total:
+        print("rolling back", done_total - done_count)
+        if done_count < len(to_del):
+            for i in range(done_total - done_count - len(to_add) - len(to_upd)):
+                save_dict[fs[to_del[-1-i]]] = sync_ts[to_del[-1-i]]
+        else:
+            all_todos = to_add + to_upd
+            for i in range(done_total - done_count):
+                del save_dict[fs[all_todos[-1-i]]]
 
     try:
         with open(SYNC_PATH, "wt") as f:
             f.write(json.dumps(save_dict))
+            return done_count == done_total
     except Exception as e:
         print("caught error writing sync data", e)
+        return False
 
 def print_histogram(fs):
     mflen = max(len(f) for f in fs)
@@ -161,7 +202,7 @@ def change_pos(searfs, pos, dpos):
     return searfs[pos] if len(searfs) > 0 else -1
 
 def main():
-    fs = [fn for fn in os.listdir(SOURCE_PATH) if not isfile(join(SOURCE_PATH, fn))]
+    fs = [fn for fn in os.listdir(SOURCE_PATH) if isdir(join(SOURCE_PATH, fn))]
     fs.sort(key=str.lower)
     sel = load_sel(fs)
     #print(fs)
@@ -203,7 +244,9 @@ def main():
                     sear = sear[:-1]
             elif k == "\n":
                 os.system("clear")
-                sync(fs, sel)
+                success = sync(fs, sel)
+                if not success and input("continue? [y/N]").lower() == "y":
+                    continue
                 os.system('stty sane')
                 quit()
             else:
