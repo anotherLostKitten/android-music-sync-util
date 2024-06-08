@@ -1,14 +1,18 @@
 import os
-from os.path import isfile, join, expanduser
+from os.path import isfile, join, expanduser, getmtime
+import re
 from math import ceil
 from termcolor import colored
 import termios
 import tty
 import sys
+import json
 
+SOURCE_PATH = expanduser("~/m/music")
+SYNC_PATH = "./sync.json"
 
-SOURCE_PATH = "~/m/music"
 MAX_NAME_LENGTH = 30
+SONG_REGEX = r"^.+\.mp3$"
 
 ELLIPSIS = "\u2026"
 UNSELECT = " "
@@ -16,6 +20,60 @@ SELECT = colored("X", "white", "on_green", attrs=["bold"])
 SEARCH_ICON = colored("?", "black", "on_white", attrs=["bold"])
 SEARCH_LEFT = colored("<", "dark_grey", "on_light_grey", attrs=["bold"])
 DIRS = ['up', 'down', 'right', 'left']
+
+sync_ts = None
+
+def load_sel(fs):
+    sel = [False] * len(fs)
+    ts = [None] * len(fs)
+    try:
+        with open(SYNC_PATH, "rt") as f:
+            cache = json.loads(f.read())
+            for (i, e) in enumerate(fs):
+                if e in cache:
+                    sel[i] = True
+                    ts[i] = cache[e]
+    except Exception as e:
+        print("caught error reading sync data", e)
+    global sync_ts
+    sync_ts = tuple(ts)
+    return sel
+
+def get_modified_ts(fn):
+    try:
+        return max(getmtime(join(fn, sn))
+                   for sn in os.listdir(fn)
+                   if isfile(join(SOURCE_PATH, join(fn, sn)))
+                   and re.match(SONG_REGEX, sn))
+    except Exception as e:
+        print(f"caught error getting last modified time for album {fn}:\n\t{e}")
+        return None
+
+def sync(fs, sel):
+    global sync_ts
+    to_del = []
+    to_add = []
+    to_upd = []
+    save_dict = {}
+    for (i, e) in enumerate(sel):
+        if not e and sync_ts[i]:
+            to_del.append(i)
+        elif e:
+            ts = get_modified_ts(join(SOURCE_PATH, fs[i]))
+            save_dict[fs[i]] = ts
+            if not sync_ts[i]:
+                to_add.append(i)
+            elif sync_ts[i] != ts:
+                to_upd.append(i)
+
+    print(f"to_del({len(to_del)}): {[fs[i] for i in to_del]}\nto_add({len(to_add)}): {[fs[i] for i in to_add]}\nto_upd({len(to_upd)}): {[fs[i] for i in to_upd]}")
+    #TODO actually sync
+
+    try:
+        with open(SYNC_PATH, "wt") as f:
+            f.write(json.dumps(save_dict))
+    except Exception as e:
+        print("caught error writing sync data", e)
 
 def print_histogram(fs):
     mflen = max(len(f) for f in fs)
@@ -102,10 +160,10 @@ def change_pos(searfs, pos, dpos):
         pos = 0
     return searfs[pos] if len(searfs) > 0 else -1
 
-def main(sp):
-    fs = [f for f in os.listdir(sp) if not isfile(join(sp, f))]
+def main():
+    fs = [fn for fn in os.listdir(SOURCE_PATH) if not isfile(join(SOURCE_PATH, fn))]
     fs.sort(key=str.lower)
-    sel = [False] * len(fs) # TODO
+    sel = load_sel(fs)
     #print(fs)
     #print_histogram(fs)
     #print(len([f for f in fs if len(f) > MAX_NAME_LENGTH]), "/", len(fs))
@@ -136,13 +194,18 @@ def main(sp):
                 pos = change_pos(searfs, pos, pgl)
             elif k == "<":
                 pos = change_pos(searfs, pos, -pgl)
-            elif k == "\n":
+            elif k == "\t":
                 pos = change_pos(searfs, pos, 0)
                 if pos > 0:
                     sel[pos] = not sel[pos]
             elif k == "\b" or ord(k) == 127:
                 if len(sear) > 0:
                     sear = sear[:-1]
+            elif k == "\n":
+                os.system("clear")
+                sync(fs, sel)
+                os.system('stty sane')
+                quit()
             else:
                 sear += k
 
@@ -153,4 +216,4 @@ def main(sp):
 
 
 if __name__ == "__main__":
-    main(expanduser(SOURCE_PATH))
+    main()
