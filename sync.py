@@ -75,7 +75,7 @@ def sync(fs, sel):
 
     try:
         if not ismount(MOUNT_DIR):
-            subprocess.run(["aft-mtp-mount", "MOUNT_DIR"], check=True)
+            subprocess.run(["aft-mtp-mount", MOUNT_DIR], check=True)
         dest = join(MOUNT_DIR, DEST_PATH)
         for i in to_del:
             if os.path.exists(join(dest, fs[i])):
