@@ -16,6 +16,8 @@ DEST_PATH = "Internal shared storage/Music/"
 
 MAX_NAME_LENGTH = 30
 SONG_REGEX = r"^.+\.mp3$"
+SONG_METADATAS = ["artist", "date"]
+GET_METADATAS = True
 
 ELLIPSIS = "\u2026"
 UNSELECT = " "
@@ -50,6 +52,9 @@ def get_modified_ts(fn):
         print(f"caught error getting last modified time for album {fn}:\n\t{e}")
         return None
 
+def print_progress_indicator(done_count, done_total):
+    print(f"\r{done_count:03} / {done_total:03}", end="", flush=True)
+
 def sync(fs, sel):
     global sync_ts
     to_del = []
@@ -71,7 +76,7 @@ def sync(fs, sel):
 
     done_count = 0
     done_total = len(to_del) + len(to_add) + len(to_upd)
-    print(f"\r{done_count:03} / {done_total:03}", end="", flush=True)
+    print_progress_indicator(done_count, done_total)
 
     try:
         if not ismount(MOUNT_DIR):
@@ -93,7 +98,7 @@ def sync(fs, sel):
                 if isfile(join(fn, sn)) and re.match(SONG_REGEX, sn):
                     subprocess.run(["cp", join(fn, sn), f"{join(dest, fs[i])}/"], check=True)
             done_count += 1
-            print(f"\r{done_count:03} / {done_total:03}", end="", flush=True)
+            print_progress_indicator(done_count, done_total)
             sync_ts[i] = save_dict[fs[i]]
 
     except Exception as e:
@@ -151,7 +156,7 @@ def closest_pos(searfs, pos):
         oldpos = i
     return oldpos
 
-def print_pg(fs, searfs, pos, sel, sear):
+def print_pg(fs, searfs, pos, sel, sear, metas):
     tdim, a, pgl, pgs = calc_pg(len(searfs))
     cpos = closest_pos(searfs, pos)
     s = cpos // pgl
@@ -173,12 +178,15 @@ def print_pg(fs, searfs, pos, sel, sear):
             out += " " * spm
 
         out += "\n" if fp % a == a - 1 else " "
-    os.system("clear")
     sl = 2 * (MAX_NAME_LENGTH + 2)
     ss = SEARCH_ICON + sear if len(sear) < sl else SEARCH_LEFT + sear[-sl + 1:]
-    pgmk = f"{s+1} / {pgs}"
+    tags = ""
+    if searfs and metas:
+        tags = f"{metas[searfs[cpos]].join('; ')}   "
+    pgmk = f"{tags}{s+1} / {pgs}"
     spm = tdim[0] - min(len(sear), sl - 1) - len(pgmk) - 1
     out += ss + " " * spm + pgmk
+    os.system("clear")
     print(out, end="", flush=True)
 
 def get_key():
@@ -194,6 +202,23 @@ def get_key():
     finally:
         termios.tcsetattr(sys.stdin, termios.TCSADRAIN, old_settings)
 
+def get_album_metadata(fn, print_progress_length = None):
+    dat = None
+    fnp = join(SOURCE_PATH, fn)
+    for sn in os.listdir(fnp):
+        if isfile(join(fnp, sn)) and re.match(SONG_REGEX, sn):
+            try_dat = get_song_metadata(join(fnp, sn), SONG_METADATAS)
+            if len(try_dat) == len(SONG_METADATAS):
+                dat = tuple(try_dat)
+                break
+    if print_progress_length:
+        print_progress_indicator(*print_progress_length)
+    return dat
+
+def get_song_metadata(file_name, tags):
+    res = subprocess.run(["ffprobe", "-show_entries", f"format_tags={','.join(tags)}", "-of", "compact=p=0:nk=1", "-loglevel", "error", "-i", file_name], check=True, capture_output = True, text = True)
+    return res.stdout.strip().split("|")
+
 def change_pos(searfs, pos, dpos):
     pos = closest_pos(searfs, pos) + dpos
     if pos >= len(searfs):
@@ -205,6 +230,9 @@ def change_pos(searfs, pos, dpos):
 def main():
     fs = [fn for fn in os.listdir(SOURCE_PATH) if isdir(join(SOURCE_PATH, fn))]
     fs.sort(key=str.lower)
+    metas = None
+    if GET_METADATAS:
+        metas = [get_album_metadata(fn, (i, len(fs))) for i, fn in enumerate(fs)]
     sel = load_sel(fs)
     #print(fs)
     #print_histogram(fs)
@@ -220,7 +248,7 @@ def main():
             if pos < 0:
                 pos = 0
 
-            print_pg(fs, searfs, pos, sel, sear)
+            print_pg(fs, searfs, pos, sel, sear, metas)
 
             k = get_key()
             tdim, a, pgl, pgs = calc_pg(len(searfs))
