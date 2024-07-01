@@ -182,7 +182,7 @@ def print_pg(fs, searfs, pos, sel, sear, metas):
     ss = SEARCH_ICON + sear if len(sear) < sl else SEARCH_LEFT + sear[-sl + 1:]
     tags = ""
     if searfs and metas:
-        tags = f"{metas[searfs[cpos]].join('; ')}   "
+        tags = f"{'; '.join(metas[searfs[cpos]])}   "
     pgmk = f"{tags}{s+1} / {pgs}"
     spm = tdim[0] - min(len(sear), sl - 1) - len(pgmk) - 1
     out += ss + " " * spm + pgmk
